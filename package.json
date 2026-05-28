@@ -1,0 +1,14 @@
+{
+  "name": "resume-ai-rewriter",
+  "version": "1.0.0",
+  "description": "Real-time resume rewriter powered by Mistral AI",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev":   "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}

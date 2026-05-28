@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ResumeAI — Real-Time Rewriter</title>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- PDF parsing: Mozilla PDF.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- DOCX parsing: Mammoth.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <!-- Env loader — populates window.MISTRAL_API_KEY from server /env endpoint -->
+  <script src="env.js"></script>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── HEADER ─────────────────────────────────────── -->
+  <header>
+    <div class="logo">ResumeAI <span>real-time rewriter</span></div>
+    <div class="header-meta">
+      <div id="key-indicator" class="key-indicator loading">
+        <span class="key-dot"></span>
+        <span id="key-indicator-text">connecting…</span>
+      </div>
+      <div class="header-status">
+        <span class="status-dot" id="global-dot"></span>
+        <span id="global-status">waiting for input</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── MAIN GRID ───────────────────────────────────── -->
+  <main>
+
+    <!-- LEFT: INPUTS ────────────────────────────────── -->
+    <div class="panel inputs-panel">
+
+      <!-- ① Resume Sub-Panel -->
+      <div class="sub-panel" style="flex:1.3">
+        <div class="sub-panel-header">
+          <span class="sub-panel-label">① Your Resume</span>
+          <div class="sub-panel-actions">
+            <span class="panel-badge" id="resume-badge">NOT LOADED</span>
+            <button class="btn btn-sm" id="btn-load-sample-resume">Sample</button>
+            <button class="btn btn-sm" id="btn-clear-resume">Clear</button>
+          </div>
+        </div>
+
+        <!-- Upload / drag-drop zone -->
+        <div class="upload-zone" id="upload-zone">
+          <div class="upload-zone-inner">
+            <div class="upload-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+            </div>
+            <div class="upload-label">Drop your resume here</div>
+            <div class="upload-sub">PDF, DOCX, or TXT supported</div>
+            <div class="upload-actions">
+              <label class="btn btn-primary btn-sm upload-btn" style="cursor:pointer">
+                Browse File
+                <input type="file" id="file-upload" accept=".txt,.pdf,.docx,.doc" style="display:none" />
+              </label>
+              <span class="upload-or">or paste below</span>
+            </div>
+          </div>
+          <!-- Parsing overlay -->
+          <div class="parsing-overlay" id="parsing-overlay" style="display:none">
+            <div class="parsing-spinner"></div>
+            <span id="parsing-label">Extracting text…</span>
+          </div>
+        </div>
+
+        <textarea
+          id="resume-input"
+          placeholder="…or paste your resume text directly here."
+          spellcheck="false"
+        ></textarea>
+      </div>
+
+      <!-- ② JD Sub-Panel -->
+      <div class="sub-panel" style="flex:1">
+        <div class="sub-panel-header">
+          <span class="sub-panel-label">② Job Description</span>
+          <div class="sub-panel-actions">
+            <span class="panel-badge" id="jd-badge">NOT ANALYZED</span>
+            <button class="btn btn-sm" id="btn-load-sample-jd">Sample</button>
+            <button class="btn btn-sm" id="btn-clear-jd">Clear</button>
+          </div>
+        </div>
+
+        <!-- JD Signals strip -->
+        <div id="jd-signals"></div>
+
+        <textarea
+          id="jd-input"
+          placeholder="Paste the job description here…
+
+Senior Full Stack Engineer — TechCorp
+Requirements:
+• 5+ years of experience
+• React, TypeScript, Node.js
+• AWS, Docker, PostgreSQL"
+          spellcheck="false"
+        ></textarea>
+      </div>
+
+      <!-- Rewrite bar -->
+      <div id="rewrite-bar">
+        <button class="btn btn-primary" id="btn-rewrite">⚡ Rewrite Resume</button>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <span id="timing-display">—</span>
+        <button class="btn btn-sm btn-danger" id="btn-cancel" style="display:none">✕ Cancel</button>
+      </div>
+    </div>
+
+    <!-- RIGHT: OUTPUT ───────────────────────────────── -->
+    <div class="panel output-panel">
+
+      <div id="output-toolbar">
+        <span class="panel-title">③ Rewritten Resume</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span id="cache-stats" class="stat" style="display:none"></span>
+          <button class="btn btn-sm btn-success" id="copy-all-btn" style="display:none">Copy All</button>
+          <button class="btn btn-sm" id="btn-clear-output" style="display:none">Clear</button>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div id="empty-state">
+        <div class="empty-icon">✦</div>
+        <div class="empty-title">Ready to Rewrite</div>
+        <div class="empty-steps">
+          <div class="empty-step"><span class="step-num">1</span><span>Upload or paste your resume</span></div>
+          <div class="empty-step"><span class="step-num">2</span><span>Paste the job description</span></div>
+          <div class="empty-step"><span class="step-num">3</span><span>Hit Rewrite — results stream in real time</span></div>
+        </div>
+        <div class="empty-sub">Under 2s · Parallel sections · Smart caching</div>
+      </div>
+
+      <!-- Output sections -->
+      <div id="output-sections" style="display:none">
+
+        <div class="output-section" id="sec-summary">
+          <div class="output-section-header">
+            <span class="section-label">Professional Summary</span>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span class="section-timing" id="timing-summary">pending</span>
+              <button class="btn btn-sm" onclick="copySection('summary')">Copy</button>
+            </div>
+          </div>
+          <div class="output-section-body empty" id="body-summary">Waiting…</div>
+        </div>
+
+        <div class="output-section" id="sec-experience">
+          <div class="output-section-header">
+            <span class="section-label">Work Experience</span>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span class="section-timing" id="timing-experience">pending</span>
+              <button class="btn btn-sm" onclick="copySection('experience')">Copy</button>
+            </div>
+          </div>
+          <div class="output-section-body empty" id="body-experience">Waiting…</div>
+        </div>
+
+        <div class="output-section" id="sec-skills">
+          <div class="output-section-header">
+            <span class="section-label">Skills</span>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span class="section-timing" id="timing-skills">pending</span>
+              <button class="btn btn-sm" onclick="copySection('skills')">Copy</button>
+            </div>
+          </div>
+          <div class="output-section-body empty" id="body-skills">Waiting…</div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+
+  <!-- ── FOOTER ────────────────────────────────────── -->
+  <footer>
+    <div class="footer-stats">
+      <div class="stat">Parse: <span id="stat-parse">—</span></div>
+      <div class="stat">JD: <span id="stat-jd">—</span></div>
+      <div class="stat">Rewrite: <span id="stat-rewrite">—</span></div>
+      <div class="stat">Total: <span id="stat-total">—</span></div>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted)">
+      mistral-small-latest · streaming · parallel
+    </div>
+  </footer>
+
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- ── SAMPLE DATA ──────────────────────────────────── -->
+<script>
+const SAMPLE_RESUME = `John Doe
+john.doe@email.com | +1 (555) 123-4567 | linkedin.com/in/johndoe | San Francisco, CA
+
+SUMMARY
+Software engineer with 6 years of experience building web applications and APIs. Comfortable working across the stack and collaborating with product and design teams.
+
+EXPERIENCE
+Software Engineer — MegaCorp Inc. (2021–Present)
+• Developed and maintained REST APIs using Node.js and Express
+• Built React components for the company's customer dashboard
+• Worked with PostgreSQL databases and wrote complex SQL queries
+• Participated in code reviews and helped onboard new engineers
+• Deployed applications to AWS using EC2 and S3
+
+Software Engineer — StartupABC (2018–2021)
+• Developed full-stack features for a B2B SaaS platform using React and Python/Django
+• Integrated third-party APIs (Stripe, Twilio, SendGrid)
+• Set up basic CI/CD pipelines using GitHub Actions
+• Helped reduce page load times by 35% through frontend optimization
+
+SKILLS
+JavaScript, TypeScript, Python, React, Node.js, Express, Django, PostgreSQL, MySQL, Redis, AWS, Docker, Git, GraphQL, REST APIs
+
+EDUCATION
+B.S. Computer Science — UC Berkeley, 2018
+
+CERTIFICATIONS
+AWS Certified Developer – Associate (2022)`;
+
+const SAMPLE_JD = `Senior Full Stack Engineer — TechScale Inc.
+San Francisco, CA (Hybrid) | Full-time
+
+We need a Senior Full Stack Engineer to join our core platform team.
+
+Requirements
+• 5+ years of professional software engineering experience
+• Expert-level proficiency in React and TypeScript
+• Strong Node.js and REST/GraphQL API development skills
+• Experience with AWS cloud infrastructure
+• Proficiency with PostgreSQL or similar relational databases
+• Experience with Docker and containerization
+• Strong understanding of CI/CD practices
+
+Nice to Have
+• Kubernetes or ECS experience
+• Python for data pipelines
+• Redis for caching
+• Monitoring tools (Datadog, CloudWatch)
+
+Responsibilities
+• Design and maintain scalable backend services and APIs
+• Build performant, accessible React frontends
+• Collaborate with data science to integrate ML model outputs
+• Lead technical design discussions and mentor junior engineers`;
+</script>
+
+<!-- ── MAIN SCRIPT ───────────────────────────────────── -->
+<script type="module">
+import { ResumeRewriter } from './app.js';
+
+// Configure PDF.js worker
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+const rewriter = new ResumeRewriter();
+let rewriteStartTime = null;
+const sectionResults = { summary: '', experience: '', skills: '' };
+
+// ── DOM refs ───────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const resumeInput   = $('resume-input');
+const jdInput       = $('jd-input');
+const btnRewrite    = $('btn-rewrite');
+const btnCancel     = $('btn-cancel');
+const progressFill  = $('progress-fill');
+const timingDisplay = $('timing-display');
+const globalDot     = $('global-dot');
+const globalStatus  = $('global-status');
+const emptyState    = $('empty-state');
+const outputSections= $('output-sections');
+const uploadZone    = $('upload-zone');
+const parsingOverlay= $('parsing-overlay');
+const parsingLabel  = $('parsing-label');
+const keyIndicator  = $('key-indicator');
+const keyIndicatorText = $('key-indicator-text');
+
+// ── API Key — loaded from server via env.js ───────────
+async function initApiKey() {
+  // Wait for env.js to finish fetching /env (it dispatches 'envReady' when done)
+  if (!window.__envReady) {
+    await new Promise(resolve => window.addEventListener('envReady', resolve, { once: true }));
+  }
+  const key = window.MISTRAL_API_KEY || '';
+  if (key && key.length > 10) {
+    rewriter.setApiKey(key);
+    keyIndicator.className = 'key-indicator ok';
+    keyIndicatorText.textContent = 'API key ready';
+  } else {
+    keyIndicator.className = 'key-indicator error';
+    keyIndicatorText.textContent = 'No API key — run: node server.js';
+  }
+}
+initApiKey();
+
+// ── FILE PARSING ──────────────────────────────────────
+
+async function parsePDF(file) {
+  parsingLabel.textContent = 'Reading PDF…';
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let text = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    parsingLabel.textContent = `Extracting page ${i} of ${pdf.numPages}…`;
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.map(item => item.str).join(' ');
+    text += pageText + '\n';
+  }
+  return text.trim();
+}
+
+async function parseDOCX(file) {
+  parsingLabel.textContent = 'Reading DOCX…';
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  return result.value.trim();
+}
+
+async function handleFile(file) {
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+  const allowed = ['txt', 'pdf', 'docx', 'doc'];
+  if (!allowed.includes(ext)) {
+    toast(`Unsupported file type .${ext} — use PDF, DOCX, or TXT`, 'error');
+    return;
+  }
+
+  // Show parsing overlay
+  parsingOverlay.style.display = 'flex';
+  parsingLabel.textContent = 'Reading file…';
+
+  try {
+    let text = '';
+    if (ext === 'pdf') {
+      text = await parsePDF(file);
+    } else if (ext === 'docx' || ext === 'doc') {
+      text = await parseDOCX(file);
+    } else {
+      text = await file.text();
+    }
+
+    if (!text || text.length < 30) {
+      toast('Could not extract text — is this a scanned PDF?', 'error');
+      return;
+    }
+
+    resumeInput.value = text;
+    resumeInput.dispatchEvent(new Event('input'));
+    toast(`✓ Loaded ${file.name} (${(file.size / 1024).toFixed(0)} KB)`, 'success');
+  } catch (err) {
+    toast(`Failed to parse ${file.name}: ${err.message}`, 'error');
+  } finally {
+    parsingOverlay.style.display = 'none';
+  }
+}
+
+// ── DRAG AND DROP ─────────────────────────────────────
+uploadZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  uploadZone.classList.add('drag-over');
+});
+uploadZone.addEventListener('dragleave', () => {
+  uploadZone.classList.remove('drag-over');
+});
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile(file);
+});
+
+// File input button
+$('file-upload').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) handleFile(file);
+  e.target.value = ''; // reset so same file can be re-uploaded
+});
+
+// ── RESUME TEXTAREA ───────────────────────────────────
+let resumeDebounce;
+resumeInput.addEventListener('input', () => {
+  clearTimeout(resumeDebounce);
+  resumeDebounce = setTimeout(() => {
+    const text = resumeInput.value.trim();
+    if (text.length > 50) {
+      const info = rewriter.loadResume(text);
+      $('resume-badge').textContent = info.name || 'LOADED';
+      $('resume-badge').classList.add('active');
+      $('stat-parse').textContent = info.parseMs + 'ms';
+      setStatus('ready', 'resume loaded');
+    }
+  }, 500);
+});
+
+// ── JD TEXTAREA — analyze on paste ───────────────────
+let jdDebounce;
+jdInput.addEventListener('input', () => {
+  clearTimeout(jdDebounce);
+  jdDebounce = setTimeout(() => {
+    const text = jdInput.value.trim();
+    if (text.length > 30) {
+      const signals = rewriter.analyzeJobDescription(text);
+      $('jd-badge').textContent = signals.title.slice(0, 22).toUpperCase();
+      $('jd-badge').classList.add('active');
+      $('stat-jd').textContent = signals._analyzeMs + 'ms';
+      renderJDSignals(signals);
+      setStatus('ready', `JD: ${signals.title}`);
+    }
+  }, 350);
+});
+
+// ── SAMPLE LOADERS ────────────────────────────────────
+$('btn-load-sample-resume').addEventListener('click', () => {
+  resumeInput.value = SAMPLE_RESUME;
+  resumeInput.dispatchEvent(new Event('input'));
+  toast('Sample resume loaded', 'success');
+});
+$('btn-load-sample-jd').addEventListener('click', () => {
+  jdInput.value = SAMPLE_JD;
+  jdInput.dispatchEvent(new Event('input'));
+  toast('Sample JD loaded', 'success');
+});
+$('btn-clear-resume').addEventListener('click', () => {
+  resumeInput.value = '';
+  $('resume-badge').textContent = 'NOT LOADED';
+  $('resume-badge').classList.remove('active');
+});
+$('btn-clear-jd').addEventListener('click', () => {
+  jdInput.value = '';
+  $('jd-signals').className = '';
+  $('jd-signals').innerHTML = '';
+  $('jd-badge').textContent = 'NOT ANALYZED';
+  $('jd-badge').classList.remove('active');
+});
+$('btn-clear-output').addEventListener('click', clearOutput);
+
+// ── REWRITE ───────────────────────────────────────────
+btnRewrite.addEventListener('click', async () => {
+  if (!rewriter.apiKey || rewriter.apiKey.length < 10) {
+    toast('No API key — add MISTRAL_API_KEY to .env and run: node server.js', 'error');
+    return;
+  }
+  if (!resumeInput.value.trim()) { toast('Upload or paste your resume first', 'error'); return; }
+  if (!jdInput.value.trim())     { toast('Paste a job description first', 'error'); return; }
+
+  if (!rewriter.parsedResume) rewriter.loadResume(resumeInput.value);
+  if (!rewriter.jdSignals)    rewriter.analyzeJobDescription(jdInput.value);
+
+  rewriteStartTime = performance.now();
+  showOutputPanel();
+  resetSections();
+  setRewriting(true);
+  setStatus('working', 'rewriting in parallel…');
+
+  try {
+    await rewriter.rewrite({
+      onStart: () => { progressFill.style.width = '5%'; },
+
+      summary: {
+        onToken: (_, full) => { updateSection('summary', full, true); progressFill.style.width = '30%'; },
+        onDone:  (full, timing) => { updateSection('summary', full, false); setTimingBadge('summary', timing); sectionResults.summary = full; },
+      },
+      experience: {
+        onToken: (_, full) => { updateSection('experience', full, true); progressFill.style.width = '60%'; },
+        onDone:  (full, timing) => { updateSection('experience', full, false); setTimingBadge('experience', timing); sectionResults.experience = full; },
+      },
+      skills: {
+        onToken: (_, full) => { updateSection('skills', full, true); progressFill.style.width = '85%'; },
+        onDone:  (full, timing) => { updateSection('skills', full, false); setTimingBadge('skills', timing); sectionResults.skills = full; },
+      },
+
+      onAllDone: (_, { totalMs, cacheStats }) => {
+        const wallMs = Math.round(performance.now() - rewriteStartTime);
+        progressFill.style.width = '100%';
+        $('stat-rewrite').textContent = totalMs + 'ms';
+        $('stat-total').textContent = wallMs + 'ms';
+        timingDisplay.textContent = wallMs + 'ms';
+        timingDisplay.style.color = wallMs < 2000 ? 'var(--success)' : 'var(--warning)';
+        $('cache-stats').textContent = `cache ${cacheStats.hitRate}`;
+        $('cache-stats').style.display = 'block';
+        $('copy-all-btn').style.display = 'block';
+        $('btn-clear-output').style.display = 'block';
+        setRewriting(false);
+        setStatus('ready', `done in ${wallMs}ms ${wallMs < 2000 ? '✓' : '⚠'}`);
+        toast(`Rewrite done in ${wallMs}ms`, wallMs < 2000 ? 'success' : '');
+        setTimeout(() => { progressFill.style.width = '0%'; }, 2000);
+      },
+
+      onError: (err) => {
+        setRewriting(false);
+        setStatus('error', err.message);
+        toast(`Error: ${err.message}`, 'error');
+        progressFill.style.width = '0%';
+      },
+
+      onAbort: () => {
+        setRewriting(false);
+        setStatus('ready', 'cancelled');
+        progressFill.style.width = '0%';
+        toast('Cancelled');
+      },
+    });
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      toast(`Error: ${err.message}`, 'error');
+      setRewriting(false);
+    }
+  }
+});
+
+btnCancel.addEventListener('click', () => rewriter.cancel());
+
+// ── COPY ──────────────────────────────────────────────
+window.copySection = (section) => {
+  const text = sectionResults[section];
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => toast(`${section} copied`, 'success'));
+};
+$('copy-all-btn').addEventListener('click', () => {
+  const full = [sectionResults.summary, sectionResults.experience, sectionResults.skills]
+    .filter(Boolean).join('\n\n---\n\n');
+  if (!full) return;
+  navigator.clipboard.writeText(full).then(() => toast('All sections copied', 'success'));
+});
+
+// ── UI HELPERS ────────────────────────────────────────
+function setRewriting(active) {
+  btnRewrite.classList.toggle('loading', active);
+  btnRewrite.textContent = active ? '⟳ Rewriting…' : '⚡ Rewrite Resume';
+  btnCancel.style.display = active ? 'block' : 'none';
+}
+function setStatus(type, msg) {
+  globalStatus.textContent = msg;
+  globalDot.className = 'status-dot' + (type === 'ready' ? ' ready' : type === 'working' ? ' working' : type === 'error' ? ' error' : '');
+}
+function showOutputPanel() {
+  emptyState.style.display = 'none';
+  outputSections.style.display = 'flex';
+}
+function clearOutput() {
+  emptyState.style.display = 'flex';
+  outputSections.style.display = 'none';
+  $('copy-all-btn').style.display = 'none';
+  $('btn-clear-output').style.display = 'none';
+  $('cache-stats').style.display = 'none';
+  timingDisplay.textContent = '—';
+  timingDisplay.style.color = '';
+  sectionResults.summary = sectionResults.experience = sectionResults.skills = '';
+}
+function resetSections() {
+  ['summary', 'experience', 'skills'].forEach(s => {
+    updateSection(s, 'Generating…', true);
+    $(`timing-${s}`).textContent = 'pending';
+    $(`timing-${s}`).className = 'section-timing';
+  });
+  sectionResults.summary = sectionResults.experience = sectionResults.skills = '';
+}
+function updateSection(name, text, streaming) {
+  const body = $(`body-${name}`);
+  const sec  = $(`sec-${name}`);
+  body.textContent = text;
+  body.classList.remove('empty');
+  sec.className = 'output-section ' + (streaming ? 'streaming' : 'done');
+}
+function setTimingBadge(name, timing) {
+  const el = $(`timing-${name}`);
+  if (timing.cached) {
+    el.textContent = 'cached ⚡';
+    el.className = 'section-timing cached';
+  } else {
+    const ms = timing.totalMs;
+    el.textContent = ms + 'ms' + (timing.firstTokenMs ? ` · first ${timing.firstTokenMs}ms` : '');
+    el.className = 'section-timing' + (ms < 1500 ? ' fast' : '');
+  }
+}
+function renderJDSignals(signals) {
+  const el = $('jd-signals');
+  el.innerHTML = '';
+  const add = (text, cls) => {
+    const tag = document.createElement('span');
+    tag.className = 'signal-tag ' + cls;
+    tag.textContent = text;
+    el.appendChild(tag);
+  };
+  add(signals.title, 'title');
+  add(signals.seniority.toUpperCase(), 'seniority');
+  signals.requiredSkills.slice(0, 7).forEach(s => add(s, 'skill'));
+  el.classList.add('visible');
+}
+
+let toastTimer;
+function toast(msg, type = '') {
+  const el = $('toast');
+  el.textContent = msg;
+  el.className = 'show' + (type ? ' ' + type : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = ''; }, 2800);
+}
+</script>
+
+</body>
+</html>
